@@ -534,6 +534,28 @@ Not validated, and stated rather than implied:
 * rolling back an entire store directory to an earlier consistent state cannot
   be detected without an external monotonic anchor, as described above.
 
+## Fresh clone closure
+
+The intended release commit was cloned into a clean directory that shared
+nothing with the working tree, and the whole lifecycle was run from that clone:
+
+    git clone <repository> fresh-clone
+    cmake -S fresh-clone -B fresh-clone/build -DCMAKE_BUILD_TYPE=Release
+    cmake --build fresh-clone/build --config Release --parallel
+    ctest --test-dir fresh-clone/build -C Release
+    cmake --install fresh-clone/build --config Release --prefix fresh-clone/install
+    cmake -S fresh-clone/tests/consumer -B fresh-clone/consumer \
+          -DCMAKE_PREFIX_PATH=fresh-clone/install
+    cmake --build fresh-clone/consumer --config Release
+    fresh-clone/consumer/Release/fac_consumer
+
+Observed on this host: the clone resolved to the release commit; configure and
+build succeeded with warnings as errors; `ctest` reported 3 of 3 tests passing;
+the install produced the library, the headers, the CMake package and `facctl`;
+the out-of-tree consumer configured through `find_package(FAC CONFIG REQUIRED)`
+against the installed prefix only, built, and ran to `consumer-ok` with an
+allowing verdict, a committed grant and an emitted reservation intent.
+
 ## License
 
 Apache License 2.0. Copyright 2026 Summon Software Labs. No telemetry transmission.
