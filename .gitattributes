@@ -1,0 +1,26 @@
+# Facility Admission Control - repository attributes.
+#
+# Copyright 2026 Summon Software Labs.
+# Licensed under the Apache License, Version 2.0.
+#
+# All source and documentation is UTF-8 with LF endings. Executables and
+# archives are never rewritten by line-ending normalisation. Durable store
+# files, should one ever be committed by accident, are binary too.
+
+* text=auto eol=lf
+
+*.hpp text eol=lf
+*.cpp text eol=lf
+*.md  text eol=lf
+*.txt text eol=lf
+*.cmake text eol=lf
+*.in  text eol=lf
+CMakeLists.txt text eol=lf
+
+*.exe  binary
+*.dll  binary
+*.lib  binary
+*.pdb  binary
+*.facj binary
+*.facs binary
+*.facm binary

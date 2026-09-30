@@ -1,0 +1,49 @@
+# Build trees
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake and CTest leftovers
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+CTestTestfile.cmake
+cmake_install.cmake
+install_manifest.txt
+Testing/
+_deps/
+
+# Compiler output
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.ipdb
+*.iobj
+*.gcda
+*.gcno
+*.dSYM/
+
+# Stores written by the tools, examples and tests while working locally
+*.facj
+*.facs
+*.facm
+fac-store/
+facility-admission-store/
+
+# Editors
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*~
+
+# Test scratch space
+fac-test-*/
