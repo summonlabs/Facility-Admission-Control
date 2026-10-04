@@ -1,4 +1,4 @@
-﻿# Facility Admission Control
+# Facility Admission Control
 
 The generation-bound facility admission runtime for the Summon Software Labs
 Data Center Control Plane (DCCP), repository 44 of the canonical 72-runtime
@@ -7,7 +7,7 @@ DCCP.
 Facility Admission Control answers one question:
 
 > May this facility commitment be accepted now, given the capacity, protection,
-> tenancy, obligations and policy that are authoritative at this moment â€” and
+> tenancy, obligations and policy that are authoritative at this moment — and
 > if not, exactly which authority, generation or constraint says no?
 
 It is a C++20 library with no third-party dependencies, a command line tool, a
@@ -32,19 +32,19 @@ processes, real files and real installed artifacts.
 
 **This repository explicitly does not own**:
 
-* measuring capacity â€” Facility Capacity, Rack Capacity, Power Capacity,
+* measuring capacity — Facility Capacity, Rack Capacity, Power Capacity,
   Cooling Capacity and Space Capacity measure and report it;
-* creating capacity â€” nothing here provisions anything;
-* workload scheduling â€” a commitment is not a placement;
-* network path allocation â€” Network Admission Fabric and the path authorities
+* creating capacity — nothing here provisions anything;
+* workload scheduling — a commitment is not a placement;
+* network path allocation — Network Admission Fabric and the path authorities
   own that;
-* physical placement execution â€” Facility Placement Planner executes placements;
+* physical placement execution — Facility Placement Planner executes placements;
 * the tenant registry, service class definitions, maintenance windows, incident
-  state, placement policy or facility policy â€” each arrives as a
+  state, placement policy or facility policy — each arrives as a
   generation-stamped snapshot from its owner;
-* the reservation itself â€” this runtime emits a bounded intent to the owner of
+* the reservation itself — this runtime emits a bounded intent to the owner of
   reservation and consumes the evidence that comes back;
-* final resource-entitlement lifecycle â€” Resource Entitlement owns it, and this
+* final resource-entitlement lifecycle — Resource Entitlement owns it, and this
   runtime never performs it.
 
 The boundary is enforced in the type system rather than promised in prose: every
@@ -120,8 +120,8 @@ These are not slogans; each one is a property the code and the tests enforce.
 
 A change to any bound generation fences the grant: the commit re-checks the
 generation *and* the content digest, and a mismatch is a recorded fence with the
-specific cause. A change that merely adds evidence â€” a newer snapshot of an
-authority the decision did not use â€” does not fence anything, because the grant
+specific cause. A change that merely adds evidence — a newer snapshot of an
+authority the decision did not use — does not fence anything, because the grant
 binds only what it used.
 
 ## The evidence model
@@ -136,8 +136,8 @@ For each authority the evaluator checks, in this order: presence, internal
 validity, scope (the tenant, envelope and service class must be the ones the
 request names), observation time against the freshness budget, future skew,
 pinned generation, and the generation watermark the ledger already holds. The
-outcome is recorded as an evidence reference â€” accepted or rejected, with the
-reason â€” and only accepted evidence is used afterwards.
+outcome is recorded as an evidence reference — accepted or rejected, with the
+reason — and only accepted evidence is used afterwards.
 
 Reading a requirement vector (a service class obligation, a policy allowance) is
 different from reading a measured vector (capacity, headroom). In a
@@ -148,7 +148,7 @@ becomes zero.
 ## Blocker precedence
 
 Blockers are declared in precedence order, lower is more decisive, and the
-primary blocker is the first one in that order â€” not the first one discovered.
+primary blocker is the first one in that order — not the first one discovered.
 Every applicable blocker is kept, so a refusal can name its cause and still show
 what else was wrong.
 
@@ -240,7 +240,7 @@ committed length, which the next writer discards.
 
 Rollback protection: two manifest slots with monotonic generations detect a
 reverted or torn slot, and the control epoch advance on every writer open means a
-restored older state cannot resurrect live authority â€” grants from the older
+restored older state cannot resurrect live authority — grants from the older
 epoch are fenced. Rolling back an entire store directory to an earlier consistent
 state cannot be detected without an external monotonic anchor, and that
 limitation is stated rather than hidden.
@@ -416,39 +416,39 @@ configurations.
 
 What the suites actually prove:
 
-* **core** â€” SHA-256 against published NIST vectors (empty, "abc", block
+* **core** — SHA-256 against published NIST vectors (empty, "abc", block
   boundaries, one million 'a'), CRC-32C known answers, checked arithmetic at the
   exact limits, UTF-8 validation including overlong forms, identity and digest
   parsing refusals, timestamp bounds and formatting.
-* **codec** â€” round trips of every primitive, canonical refusals (non-zero
+* **codec** — round trips of every primitive, canonical refusals (non-zero
   reserved fields, impossible booleans, lengths that exceed the input, trailing
   bytes, zero digests), a truncation sweep that decodes every strict prefix, and
   a byte-flip sweep that never crashes.
-* **model** â€” encode/decode round trips for every domain type, validation
+* **model** — encode/decode round trips for every domain type, validation
   refusals at the persistence boundary, and explicit-unknown semantics.
-* **adversarial** â€” absurd declared sizes, impossible enum values, hostile text,
+* **adversarial** — absurd declared sizes, impossible enum values, hostile text,
   boundary integers, duplicate identities and store paths that are empty, files
   rather than directories, or too long for the platform.
-* **verdicts, boundary, staleness, idempotency, fencing** â€” one authoritative
+* **verdicts, boundary, staleness, idempotency, fencing** — one authoritative
   input changed per test, with the expected verdict, primary blocker and
   secondary blockers asserted; exact capacity boundaries; every freshness and
   supersession rule; replay resolved before staleness; and each fence cause.
-* **ledger_replay** â€” replay through the same apply path, out-of-order and
+* **ledger_replay** — replay through the same apply path, out-of-order and
   duplicate record refusal, compaction and reopen digest equality.
-* **durable** â€” real store files: uncommitted tail discarded with an exact byte
+* **durable** — real store files: uncommitted tail discarded with an exact byte
   count, a five-case corruption sweep asserting exact error codes through both
   the writer and the reader, forged-manifest rollback detection, compaction with
   a loaded snapshot, recovery from the surviving manifest slot, and a read-only
   open that leaves every file's size and SHA-256 unchanged.
-* **multiprocess** â€” real independent processes: lock refusal
+* **multiprocess** — real independent processes: lock refusal
   (`writer_lock_held`), kernel lock release after an abrupt `TerminateProcess`
   of the holder, a child killed mid-write whose store the parent then reopens
   with a reproducible state digest, and a writer-versus-contender race.
-* **concurrency** â€” eight threads admitting concurrently with the ledger
+* **concurrency** — eight threads admitting concurrently with the ledger
   sequence advancing exactly once per request, forty rounds of two threads at an
   exact capacity boundary (always exactly one allow and one `capacity_exhausted`),
   and a reader thread inspecting while a writer admits.
-* **property** â€” seeded randomized state machines (seeds printed) with the
+* **property** — seeded randomized state machines (seeds printed) with the
   invariants of this document checked after every action, plus replay and
   compaction determinism.
 
@@ -477,7 +477,7 @@ the old behaviour.
 | The per-dimension capacity assessment was pre-populated and then refused its own entries as duplicates | Decisions reported `unknown` for every dimension while the verdict was computed from the real numbers, so an explanation could not be trusted | Each dimension is added exactly once, and the fallback path adds demand-only entries when no capacity evidence was usable |
 | A claim recorded at the snapshot's own observation instant was treated as already included in the snapshot | Two admissions could both be accepted against capacity that only one of them fitted, whenever timestamps coincided | Claims recorded at or after the observation instant are counted; over-counting can only refuse capacity, never grant it |
 | A grant's own hold counted as erosion of its own headroom | Any grant with a demand greater than half the free capacity fenced itself at commit and could never be executed | The committing grant excludes itself from the erosion query |
-| The manifest rollback rule compared journal bytes across slots | Compaction shrank the journal, so a compacted store could never be reopened or verified again â€” the store was bricked | The rule compares the committed ledger sequence, which compaction preserves |
+| The manifest rollback rule compared journal bytes across slots | Compaction shrank the journal, so a compacted store could never be reopened or verified again — the store was bricked | The rule compares the committed ledger sequence, which compaction preserves |
 | An issued grant could not be decoded from a snapshot | A snapshot containing an outstanding grant failed recovery with `state_unverified`, so compaction was unusable | An empty resolution detail is valid; a non-empty one must still be usable text |
 | The commitment lifecycle disagreed with itself: an answered commitment was refused by its own decoder | Every snapshot containing a confirmed or partial commitment failed to decode | The lifecycle is stated once: provisional has no answer, confirmed and partial have an answer and still consume, released and expired are closed |
 | Future-dated evidence inside the skew allowance was still rejected | A facility whose clock ran a few seconds ahead could not be admitted at all | Evidence at or slightly ahead of the clock is treated as age zero rather than refused |
