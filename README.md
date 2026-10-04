@@ -1,8 +1,6 @@
 # Facility Admission Control
 
-The generation-bound facility admission runtime for the Summon Software Labs
-Data Center Control Plane (DCCP), repository 44 of the canonical 72-runtime
-DCCP.
+The generation-bound facility admission runtime.
 
 Facility Admission Control answers one question:
 
