@@ -97,6 +97,10 @@ class Store {
 
   std::string directory_;
   bool read_only_ = false;
+  // Set when a frame no manifest commits could not be removed from the journal.
+  // Nothing may be appended after it, so the store refuses records until it is
+  // reopened (an open removes an uncommitted tail).
+  bool journal_tail_uncommitted_ = false;
   WriterLock lock_;
   std::unique_ptr<Journal> journal_;
   Manifest manifest_;

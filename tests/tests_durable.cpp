@@ -9,6 +9,7 @@
 // durability is a claim about what is actually on disk after a failure.
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -18,6 +19,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -582,6 +584,148 @@ FAC_TEST(durable, compaction_preserves_state) {
     FAC_CHECK(reopened.engine->recovery() != nullptr);
     FAC_CHECK(reopened.engine->recovery()->snapshot_loaded);
   }
+}
+
+// A process that dies while it creates a store leaves the journal file it had
+// just created and no manifest. Nothing was committed, so the next writer
+// completes the creation; the directory used to be refused for ever.
+FAC_TEST(durable, a_store_whose_creation_was_interrupted_can_be_opened) {
+  TempDir dir("durable-interrupted-creation");
+  const Fixture fixture = make_fixture();
+  std::filesystem::create_directories(fs_path(dir.path()));
+  write_bytes(join_path(dir.path(), std::string(durable::kJournalFileName)), {});
+  FAC_CHECK(std::filesystem::exists(fs_path(join_path(dir.path(), std::string(durable::kJournalFileName)))));
+  {
+    Harness harness = make_durable_harness(fixture, dir.path(), true);
+    FAC_CHECK_EQ(admit_fixture(*harness.engine, 1).verdict, Verdict::allow);
+    FAC_CHECK_EQ(harness.engine->sequence().value(), std::uint64_t{1});
+    FAC_CHECK_OK(harness.engine->verify());
+  }
+  Harness reopened = make_durable_harness(fixture, dir.path(), false);
+  FAC_CHECK_EQ(reopened.engine->ledger().sequence().value(), std::uint64_t{1});
+
+  // A journal that does hold bytes, with no manifest, is still refused.
+  TempDir damaged("durable-journal-without-manifest");
+  std::filesystem::create_directories(fs_path(damaged.path()));
+  write_bytes(join_path(damaged.path(), std::string(durable::kJournalFileName)),
+              std::vector<std::byte>(16, std::byte{0x5A}));
+  FAC_CHECK_ERR(durable::Store::open_writer(damaged.path(), writer_options()), ErrorCode::manifest_missing);
+}
+
+// Opens both manifest slots the way a plain file reader does (on Windows:
+// without delete sharing, so neither slot can be replaced while it is held).
+struct ManifestReaders {
+  explicit ManifestReaders(const std::string& directory)
+      : first(fs_path(join_path(directory, std::string(durable::kManifestNames[0]))), std::ios::binary),
+        second(fs_path(join_path(directory, std::string(durable::kManifestNames[1]))), std::ios::binary) {}
+  [[nodiscard]] bool open() const { return static_cast<bool>(first) && static_cast<bool>(second); }
+  void close() {
+    first.close();
+    second.close();
+  }
+  std::ifstream first;
+  std::ifstream second;
+};
+
+FAC_TEST(durable, a_commit_waits_for_a_reader_of_the_manifest) {
+  TempDir dir("durable-manifest-reader");
+  const Fixture fixture = make_fixture();
+  Harness harness = make_durable_harness(fixture, dir.path(), true);
+  FAC_CHECK_EQ(admit_fixture(*harness.engine, 1).verdict, Verdict::allow);
+  FAC_CHECK_EQ(admit_fixture(*harness.engine, 2).verdict, Verdict::allow);
+
+  // A reader has the manifest slots open for a moment (an inspection, a
+  // backup, a scan) while the next record is committed.
+  ManifestReaders readers(dir.path());
+  const bool readers_open = readers.open();
+  std::thread release([&readers] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    readers.close();
+  });
+  const Fixture step = make_fixture(3);
+  const auto decision = harness.engine->admit(step.request, step.evidence);
+  release.join();
+  FAC_CHECK(readers_open);
+  FAC_CHECK_OK(decision);
+  FAC_CHECK_OK(harness.engine->verify());
+}
+
+FAC_TEST(durable, a_record_whose_manifest_could_not_be_published_is_taken_back) {
+  TempDir dir("durable-unpublished-record");
+  const Fixture fixture = make_fixture();
+  Digest256 digest_after;
+  std::uint64_t sequence_after = 0;
+  {
+    Harness harness = make_durable_harness(fixture, dir.path(), true);
+    FAC_CHECK_EQ(admit_fixture(*harness.engine, 1).verdict, Verdict::allow);
+    FAC_CHECK_EQ(admit_fixture(*harness.engine, 2).verdict, Verdict::allow);
+    const std::uint64_t sequence_before = harness.engine->sequence().value();
+    const Digest256 digest_before = harness.engine->ledger().state_digest();
+    {
+      // The readers keep both slots open for the whole commit: the frame is
+      // written to the journal, and the manifest that would commit it cannot be
+      // published.
+      ManifestReaders readers(dir.path());
+      FAC_CHECK(readers.open());
+      const Fixture step = make_fixture(3);
+      const auto refused = harness.engine->admit(step.request, step.evidence);
+#ifdef _WIN32
+      FAC_CHECK(!refused.ok());
+      // Nothing of the refused record is left: the engine and the store are
+      // where they were.
+      FAC_CHECK_EQ(harness.engine->sequence().value(), sequence_before);
+      FAC_CHECK(harness.engine->ledger().state_digest() == digest_before);
+#else
+      FAC_CHECK_OK(refused);
+#endif
+    }
+    // The next record is committed. It used to be refused as a conflict, and
+    // so was every record after it.
+    const Fixture step = make_fixture(4);
+    FAC_CHECK_OK(harness.engine->admit(step.request, step.evidence));
+    FAC_CHECK_OK(harness.engine->verify());
+    digest_after = harness.engine->ledger().state_digest();
+    sequence_after = harness.engine->sequence().value();
+  }
+  Harness reopened = make_durable_harness(fixture, dir.path(), false);
+  FAC_CHECK_EQ(reopened.engine->ledger().sequence().value(), sequence_after);
+  FAC_CHECK(reopened.engine->ledger().state_digest() == digest_after);
+}
+
+FAC_TEST(durable, a_compaction_that_could_not_publish_leaves_the_store_openable) {
+  TempDir dir("durable-unpublished-compaction");
+  const Fixture fixture = make_fixture();
+  Digest256 digest_before;
+  std::uint64_t sequence_before = 0;
+  {
+    Harness harness = make_durable_harness(fixture, dir.path(), true);
+    FAC_CHECK_EQ(admit_fixture(*harness.engine, 1).verdict, Verdict::allow);
+    // A first compaction publishes a snapshot the manifest names.
+    FAC_CHECK_OK(harness.engine->compact());
+    FAC_CHECK_EQ(admit_fixture(*harness.engine, 2).verdict, Verdict::allow);
+    digest_before = harness.engine->ledger().state_digest();
+    sequence_before = harness.engine->sequence().value();
+    {
+      // A second compaction writes its snapshot and cannot publish the
+      // manifest that names it.
+      ManifestReaders readers(dir.path());
+      FAC_CHECK(readers.open());
+      const Status refused = harness.engine->compact();
+#ifdef _WIN32
+      FAC_CHECK(!refused.ok());
+#else
+      FAC_CHECK_OK(refused);
+#endif
+    }
+    // The store still verifies as it stands: the manifest in force names the
+    // snapshot that is on disk.
+    FAC_CHECK_OK(harness.engine->verify());
+  }
+  // It opens again. The snapshot file used to hold the new snapshot under a
+  // manifest that named the previous one, and the open failed on the digest.
+  Harness reopened = make_durable_harness(fixture, dir.path(), false);
+  FAC_CHECK_EQ(reopened.engine->ledger().sequence().value(), sequence_before);
+  FAC_CHECK(reopened.engine->ledger().state_digest() == digest_before);
 }
 
 // Deleting or damaging one manifest slot must not lose the store: the other

@@ -59,6 +59,12 @@ class Journal {
   // The running digest of the committed region.
   [[nodiscard]] Digest256 chain_digest() const;
 
+  // Removes every byte past the first `length` bytes and restores the running
+  // digest to that prefix. `length` must be a frame boundary at or below the
+  // current length. Used when the manifest that would have committed an
+  // appended frame could not be published.
+  [[nodiscard]] Status truncate_to(std::uint64_t length);
+
   // Discards every committed frame and restarts the journal. Used by
   // compaction, and only after the manifest that activates the snapshot which
   // replaces those frames has been published.

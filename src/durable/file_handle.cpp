@@ -524,11 +524,31 @@ Status write_file_atomic(const std::string& path, std::span<const std::byte> byt
     (void)remove_file(temporary);
     return wide_temp.error();
   }
-  if (MoveFileExW(wide_temp.value().c_str(), wide_target.value().c_str(),
-                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
-    const Error error = win32_error("MoveFileExW");
-    (void)remove_file(temporary);
-    return error;
+  // While a reader has the target open (an inspection, a backup, an antivirus or
+  // indexing scan) the replace fails until the reader closes it, so it is
+  // retried for a bounded time (about 2 s). A directory or a read-only file in
+  // the way is not transient and fails at once.
+  for (int attempt = 0;; ++attempt) {
+    if (MoveFileExW(wide_temp.value().c_str(), wide_target.value().c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
+      break;
+    }
+    const DWORD code = GetLastError();
+    const DWORD attributes = GetFileAttributesW(wide_target.value().c_str());
+    const bool blocked =
+        attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY)) != 0;
+    const bool transient = (code == ERROR_ACCESS_DENIED || code == ERROR_SHARING_VIOLATION ||
+                            code == ERROR_LOCK_VIOLATION) &&
+                           !blocked;
+    if (!transient || attempt >= 100) {
+      // The error text is built from the last error.
+      SetLastError(code);
+      const Error error = win32_error("MoveFileExW");
+      (void)remove_file(temporary);
+      return error;
+    }
+    Sleep(20);
   }
 #else
   std::error_code code;

@@ -6,6 +6,8 @@
 # Run as a script by CTest:
 #
 #   cmake -DFAC_SOURCE_DIR=... -DFAC_BINARY_DIR=... -DCMAKE_BUILD_TYPE=<config>
+#         [-DFAC_GENERATOR=...] [-DFAC_CXX_COMPILER=...]
+#         [-DFAC_CONSUMER_CXX_FLAGS=...] [-DFAC_CONSUMER_LINK_FLAGS=...]
 #         -P cmake/RunConsumerCheck.cmake
 #
 # It stages an install into a prefix that the build tree does not touch,
@@ -47,11 +49,31 @@ if(NOT EXISTS "${package_config}")
 endif()
 
 message(STATUS "consumer check: configuring the out-of-tree consumer")
+set(configure_command "${CMAKE_COMMAND}"
+    -S "${FAC_SOURCE_DIR}/tests/consumer"
+    -B "${consumer_build}"
+    "-DCMAKE_PREFIX_PATH=${prefix}"
+    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
+# The consumer is built the way the library under test was built: the same
+# generator and compiler, and the sanitizer flags when the library has them.
+# The per-configuration link flags come last on the link line, so that is where
+# a flag such as /INCREMENTAL:NO has to go to take effect.
+if(DEFINED FAC_GENERATOR AND NOT FAC_GENERATOR STREQUAL "")
+  list(APPEND configure_command -G "${FAC_GENERATOR}")
+endif()
+if(DEFINED FAC_CXX_COMPILER AND NOT FAC_CXX_COMPILER STREQUAL "")
+  list(APPEND configure_command "-DCMAKE_CXX_COMPILER=${FAC_CXX_COMPILER}")
+endif()
+if(DEFINED FAC_CONSUMER_CXX_FLAGS AND NOT FAC_CONSUMER_CXX_FLAGS STREQUAL "")
+  list(APPEND configure_command "-DCMAKE_CXX_FLAGS_INIT=${FAC_CONSUMER_CXX_FLAGS}")
+endif()
+if(DEFINED FAC_CONSUMER_LINK_FLAGS AND NOT FAC_CONSUMER_LINK_FLAGS STREQUAL "")
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" fac_build_type_upper)
+  list(APPEND configure_command
+       "-DCMAKE_EXE_LINKER_FLAGS_${fac_build_type_upper}=${FAC_CONSUMER_LINK_FLAGS}")
+endif()
 execute_process(
-  COMMAND "${CMAKE_COMMAND}"
-          -S "${FAC_SOURCE_DIR}/tests/consumer"
-          -B "${consumer_build}"
-          -DCMAKE_PREFIX_PATH=${prefix}
+  COMMAND ${configure_command}
   RESULT_VARIABLE configure_result
   OUTPUT_VARIABLE configure_output
   ERROR_VARIABLE configure_error)

@@ -275,6 +275,46 @@ Digest256 Journal::chain_digest() const {
   return digest;
 }
 
+Status Journal::truncate_to(std::uint64_t length) {
+  if (read_only_) {
+    return make_error(ErrorCode::read_only_store, "the journal is open for reading only");
+  }
+  if (length > length_) {
+    return make_error(ErrorCode::invalid_argument, "the journal cannot be cut back past its end");
+  }
+  // The running digest cannot be rewound, so it is rebuilt from the prefix that
+  // stays.
+  Sha256 chain;
+  std::vector<std::byte> buffer(kReadChunkBytes);
+  std::uint64_t offset = 0;
+  while (offset < length) {
+    const std::size_t wanted =
+        static_cast<std::size_t>(std::min<std::uint64_t>(kReadChunkBytes, length - offset));
+    std::size_t read = 0;
+    const Status status =
+        impl_->handle.read_at(offset, std::span<std::byte>(buffer.data(), wanted), read);
+    if (!status.ok()) {
+      return status.error();
+    }
+    if (read != wanted) {
+      return make_error(ErrorCode::journal_truncated, "the journal ended inside the region that stays");
+    }
+    chain.update(std::span<const std::byte>(buffer.data(), read));
+    offset += read;
+  }
+  const Status truncated = impl_->handle.truncate_to(length);
+  if (!truncated.ok()) {
+    return truncated.error();
+  }
+  const Status flushed = impl_->handle.flush();
+  if (!flushed.ok()) {
+    return flushed.error();
+  }
+  impl_->chain = chain;
+  length_ = length;
+  return Status::success();
+}
+
 Status Journal::reset() {
   if (read_only_) {
     return make_error(ErrorCode::read_only_store, "the journal is open for reading only");

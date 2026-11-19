@@ -290,11 +290,29 @@ if(FAC_BUILD_TESTS)
 
   add_test(NAME fac.crash_recovery
     COMMAND fac_tests --only-suite multiprocess_crash)
+  # The consumer is built with the generator and the compiler of this build,
+  # and a library built with the sanitizer links only into a consumer built
+  # with it, so the consumer is given the same sanitizer flags.
+  set(FAC_CONSUMER_FLAG_ARGUMENTS)
+  if(FAC_ENABLE_ASAN)
+    if(MSVC)
+      list(APPEND FAC_CONSUMER_FLAG_ARGUMENTS
+           "-DFAC_CONSUMER_CXX_FLAGS=/fsanitize=address /Zi"
+           "-DFAC_CONSUMER_LINK_FLAGS=/INCREMENTAL:NO /DEBUG")
+    else()
+      list(APPEND FAC_CONSUMER_FLAG_ARGUMENTS
+           "-DFAC_CONSUMER_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer"
+           "-DFAC_CONSUMER_LINK_FLAGS=-fsanitize=address,undefined")
+    endif()
+  endif()
   add_test(NAME fac.installed_consumer
     COMMAND ${CMAKE_COMMAND}
       -DFAC_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
       -DFAC_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
       -DCMAKE_BUILD_TYPE=$<CONFIG>
+      "-DFAC_GENERATOR=${CMAKE_GENERATOR}"
+      "-DFAC_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      ${FAC_CONSUMER_FLAG_ARGUMENTS}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunConsumerCheck.cmake)
 endif()
 

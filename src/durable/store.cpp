@@ -113,7 +113,18 @@ Status Store::open_common(const std::string& directory, bool read_only, const St
     }
     const bool journal_exists = path_exists(join_path(directory_, kJournalFileName));
     const bool snapshot_exists = path_exists(join_path(directory_, kSnapshotFileName));
-    if (journal_exists || snapshot_exists) {
+    // A new store creates its journal file and then publishes its first
+    // manifest. A journal that holds no bytes, with no manifest and no
+    // snapshot beside it, is what a process leaves when it dies between the two
+    // steps: nothing was ever committed, so it is not data without a manifest
+    // but a store whose creation was interrupted, and the creation is completed
+    // below instead of refusing the directory for ever.
+    bool journal_holds_data = false;
+    if (journal_exists) {
+      auto journal_bytes = file_size(join_path(directory_, kJournalFileName));
+      journal_holds_data = !journal_bytes.ok() || journal_bytes.value() != 0;
+    }
+    if (journal_holds_data || snapshot_exists) {
       return make_error(ErrorCode::manifest_missing,
                         "the store holds data but no manifest describes it");
     }
@@ -338,13 +349,16 @@ Status Store::publish_manifest(std::uint64_t manifest_generation, std::uint64_t 
   if (!written.ok()) {
     return written.error();
   }
+  // The slot holds the new manifest from here on, so the manifest in memory
+  // follows it at once: a caller that sees a failure can tell a manifest that
+  // was not published (nothing to keep) from one that was.
+  manifest_ = next;
+  report_.manifest_generation = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(manifest_generation, 0xFFFFFFFFull));
   const Status flushed = flush_directory(directory_);
   if (!flushed.ok()) {
     return flushed.error();
   }
-  manifest_ = next;
-  report_.manifest_generation = static_cast<std::uint32_t>(
-      std::min<std::uint64_t>(manifest_generation, 0xFFFFFFFFull));
   return Status::success();
 }
 
@@ -359,8 +373,20 @@ Status Store::append(RecordKind kind, LedgerSequence sequence, std::span<const s
   if (!(expected.value() == sequence)) {
     return make_error(ErrorCode::conflict, "record sequence is not the next committed sequence");
   }
+  if (journal_tail_uncommitted_) {
+    return make_error(ErrorCode::io_error,
+                      "a frame that was never committed could not be removed from the journal; "
+                      "reopen the store");
+  }
+  const LedgerSequence committed_sequence = sequence_;
+  const std::uint64_t committed_length = journal_->length();
+  const std::uint64_t committed_generation = manifest_.manifest_generation;
   const Status appended = journal_->append(kind, sequence, payload);
   if (!appended.ok()) {
+    // Part of the frame may have reached the file.
+    if (!journal_->truncate_to(committed_length).ok()) {
+      journal_tail_uncommitted_ = true;
+    }
     return appended.error();
   }
   // The manifest is published after the frame is durable, and it names the
@@ -370,6 +396,16 @@ Status Store::append(RecordKind kind, LedgerSequence sequence, std::span<const s
   const Status published =
       publish_manifest(manifest_.manifest_generation + 1, journal_->length(), journal_->chain_digest());
   if (!published.ok()) {
+    if (manifest_.manifest_generation == committed_generation) {
+      // No manifest commits the frame, so it is not a record: the journal and
+      // the sequence go back to the committed state. The caller applies a
+      // record only after this returns success, so it offers this sequence
+      // again, and it must meet the store it left.
+      sequence_ = committed_sequence;
+      if (!journal_->truncate_to(committed_length).ok()) {
+        journal_tail_uncommitted_ = true;
+      }
+    }
     return published.error();
   }
   report_.journal_bytes = journal_->length();
@@ -388,6 +424,19 @@ Status Store::publish_snapshot(const Snapshot& snapshot) {
   published_snapshot.epoch = epoch_;
   const std::vector<std::byte> bytes = published_snapshot.encode();
   const std::string path = join_path(directory_, kSnapshotFileName);
+  // The snapshot file is replaced before the manifest that names it is
+  // published, so the snapshot the manifest in force names is kept: when the
+  // new manifest cannot be published, it is put back.
+  const std::optional<Snapshot> previous_snapshot = snapshot_;
+  const Digest256 previous_digest = snapshot_digest_;
+  std::vector<std::byte> previous_bytes;
+  if (manifest_.snapshot_present) {
+    const Status kept = read_file(path, previous_bytes, kMaxSnapshotBytes);
+    if (!kept.ok()) {
+      return kept.error();
+    }
+  }
+  const std::uint64_t committed_generation = manifest_.manifest_generation;
   const Status written = write_file_atomic(path, std::span<const std::byte>(bytes.data(), bytes.size()));
   if (!written.ok()) {
     return written.error();
@@ -400,6 +449,23 @@ Status Store::publish_snapshot(const Snapshot& snapshot) {
   // snapshot is, and the journal bytes that remain are an uncommitted tail.
   const Status manifest_status = publish_manifest(manifest_.manifest_generation + 1, 0, Digest256::of({}));
   if (!manifest_status.ok()) {
+    if (manifest_.manifest_generation == committed_generation) {
+      // The manifest in force still names the previous snapshot, and an open
+      // checks the snapshot file against the digest it records.
+      snapshot_ = previous_snapshot;
+      snapshot_digest_ = previous_digest;
+      if (manifest_.snapshot_present) {
+        const Status restored = write_file_atomic(
+            path, std::span<const std::byte>(previous_bytes.data(), previous_bytes.size()));
+        if (!restored.ok()) {
+          return make_error(restored.error().code,
+                            "the snapshot the manifest names could not be put back: " +
+                                restored.error().detail);
+        }
+      } else {
+        (void)remove_file(path);
+      }
+    }
     return manifest_status.error();
   }
   const Status reset = journal_->reset();
